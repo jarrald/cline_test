@@ -20,6 +20,7 @@ from __future__ import annotations
 import http.client
 import json
 import signal
+import socket
 import threading
 import time
 import uuid
@@ -131,6 +132,8 @@ class App:
         self._server: ThreadingHTTPServer | None = None
         self.overloaded = 0
         self._overload_lock = threading.Lock()
+        self._active_sockets: set[socket.socket] = set()
+        self._sockets_lock = threading.Lock()
         self.metrics.gauge("mesh_concurrency_limit", max_concurrency)
 
     # ----------------------------------------------------------------- routes
@@ -300,11 +303,32 @@ class App:
         threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
         return server.server_address[1]
 
+    def _track_socket(self, sock: socket.socket) -> None:
+        with self._sockets_lock:
+            self._active_sockets.add(sock)
+
+    def _untrack_socket(self, sock: socket.socket) -> None:
+        with self._sockets_lock:
+            self._active_sockets.discard(sock)
+
     def stop(self) -> None:
+        """Stop serving and drop live connections, behaving like a killed pod."""
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
             self._server = None
+        with self._sockets_lock:
+            sockets = list(self._active_sockets)
+            self._active_sockets.clear()
+        for sock in sockets:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
 
     def serve(self, port: int, install_signal_handlers: bool = True) -> None:
         server = ThreadingHTTPServer(("0.0.0.0", port), _make_handler(self))
@@ -337,8 +361,20 @@ class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "mesh/1.0"
 
+    def handle(self) -> None:
+        """One tracked connection: covers idle keep-alive sockets too."""
+        app: App = self.server.app  # type: ignore[attr-defined]
+        app._track_socket(self.connection)
+        try:
+            super().handle()
+        finally:
+            app._untrack_socket(self.connection)
+
     def _handle(self) -> None:
         app: App = self.server.app  # type: ignore[attr-defined]
+        self._dispatch(app)
+
+    def _dispatch(self, app: App) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length > 0 else b""
         try:

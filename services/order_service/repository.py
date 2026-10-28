@@ -94,6 +94,9 @@ class OrderRepository:
             self._set_status(order, "PUBLISH_FAILED", reason="event publish failed")
             raise Problem(503, "event_publish_failed", "order accepted but event publishing failed", retry_after=0.25)
         order["event_published"] = True
+        if order.get("status") == "PUBLISH_FAILED":
+            order["status"] = "PENDING"
+            order["reason"] = None
         updated = {**order, "updated_at": utcnow()}
         try:
             stored = self.store.get(self._order_key(order["order_id"]), consistent=True)

@@ -221,14 +221,16 @@ class Stack:
         quantity: int = 1,
         idempotency_key: str | None = None,
         expected: int | None = 202,
+        use_idempotency: bool = True,
     ) -> dict:
         customer_id = customer_id or f"cust_{uuid.uuid4().hex[:10]}"
         key = idempotency_key or uuid.uuid4().hex
+        headers = {"Idempotency-Key": key} if use_idempotency else {}
         result = self.api(
             "POST",
             "/api/v1/orders",
             body={"customer_id": customer_id, "sku": sku, "quantity": quantity},
-            headers={"Idempotency-Key": key},
+            headers=headers,
         )
         if expected is not None and result.status != expected:
             raise AssertionError(f"place_order expected {expected}, got {result.status}: {result.body[:400]!r}")
@@ -296,6 +298,13 @@ class Stack:
             stats = self.broker_stats(topic)
             total += sum(group["lag"] for group in stats.get("groups", {}).values())
         return total
+
+    def wait_until_lag_zero(self, timeout: float = 30.0) -> bool:
+        try:
+            wait_until(lambda: self.broker_total_lag() == 0, timeout, interval=0.5, description="consumer lag zero")
+            return True
+        except WaitTimeout:
+            return False
 
     def pod_metrics(self, deployment: str, ordinal: int = 0) -> dict:
         pod = self.deployment(deployment)["pods"][ordinal]

@@ -133,13 +133,15 @@ def write_summary(path: str, records: list[dict], label: str, duration: float) -
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="run test suites with JUnit output")
-    parser.add_argument("--start-dir", action="append", default=["tests"])
+    parser.add_argument("--start-dir", action="append", default=[])
     parser.add_argument("--pattern", default="test_*.py")
     parser.add_argument("--label", default="all")
     parser.add_argument("--reports-dir", default=os.path.join(REPO_ROOT, "runtime", "test-reports"))
     parser.add_argument("--verbosity", type=int, default=2)
     args = parser.parse_args(argv)
 
+    if not args.start_dir:
+        args.start_dir = ["tests"]
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     for start_dir in args.start_dir:

@@ -39,6 +39,7 @@ class GatewayConfig:
     retry_attempts: int = 1
     breaker_threshold: int = 5
     breaker_reset_s: float = 5.0
+    failure_cooldown_s: float = 2.0
     max_concurrency: int = 64
 
     @classmethod
@@ -52,6 +53,7 @@ class GatewayConfig:
             retry_attempts=config.env_int("UPSTREAM_RETRIES", 1),
             breaker_threshold=config.env_int("BREAKER_THRESHOLD", 5),
             breaker_reset_s=config.env_float("BREAKER_RESET_S", 5.0),
+            failure_cooldown_s=config.env_float("ENDPOINT_COOLDOWN_S", 2.0),
             max_concurrency=config.env_int("MAX_CONCURRENCY", 64),
         )
 
@@ -62,7 +64,9 @@ class UpstreamProxy:
     def __init__(self, cfg: GatewayConfig, registry: discovery.ServiceRegistry, metrics_obj: metrics.Metrics) -> None:
         self.cfg = cfg
         self.metrics = metrics_obj
-        self.pool = discovery.EndpointPool(registry, cfg.upstream_service, metrics=metrics_obj)
+        self.pool = discovery.EndpointPool(
+            registry, cfg.upstream_service, metrics=metrics_obj, failure_cooldown=cfg.failure_cooldown_s
+        )
         self.http = HttpClient(timeout=cfg.timeout_s, name="gateway")
         self._breakers: dict[str, CircuitBreaker] = {}
         self._lock = __import__("threading").Lock()

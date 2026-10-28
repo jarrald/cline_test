@@ -291,6 +291,21 @@ class App:
         return Response.json({**payload, "uptime_s": round(time.time() - self._started_at, 1)}, status=status)
 
     # ----------------------------------------------------------------- serving
+    def start_in_thread(self, port: int = 0) -> int:
+        """Bind an ephemeral port and serve in a daemon thread (tests)."""
+        server = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(self))
+        server.daemon_threads = True
+        server.app = self  # type: ignore[attr-defined]
+        self._server = server
+        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+        return server.server_address[1]
+
+    def stop(self) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+
     def serve(self, port: int, install_signal_handlers: bool = True) -> None:
         server = ThreadingHTTPServer(("0.0.0.0", port), _make_handler(self))
         server.daemon_threads = True
